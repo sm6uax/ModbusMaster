@@ -28,7 +28,7 @@ Arduino library for communicating with Modbus slaves over RS232/485 (via RTU pro
 
 /* _____PROJECT INCLUDES_____________________________________________________ */
 #include "ModbusMaster.h"
-
+extern HardwareSerial Serial1;
 
 /* _____GLOBAL VARIABLES_____________________________________________________ */
 
@@ -61,7 +61,7 @@ Call once class has been instantiated, typically within setup().
 void ModbusMaster::begin(uint8_t slave, Stream &serial)
 {
 //  txBuffer = (uint16_t*) calloc(ku8MaxBufferSize, sizeof(uint16_t));
-  _u8MBSlave = slave;
+  u8MBSlave = slave;
   _serial = &serial;
   _u8TransmitBufferIndex = 0;
   u16TransmitBufferLength = 0;
@@ -91,7 +91,7 @@ uint8_t ModbusMaster::requestFrom(uint16_t address, uint16_t quantity)
   }
   // set rx buffer iterator vars
   _u8ResponseBufferIndex = 0;
-  _u8ResponseBufferLength = read;
+  u8ResponseBufferLength = read;
 
   return read;
 }
@@ -145,13 +145,13 @@ void ModbusMaster::send(uint8_t data)
 
 uint8_t ModbusMaster::available(void)
 {
-  return _u8ResponseBufferLength - _u8ResponseBufferIndex;
+  return u8ResponseBufferLength - _u8ResponseBufferIndex;
 }
 
 
 uint16_t ModbusMaster::receive(void)
 {
-  if (_u8ResponseBufferIndex < _u8ResponseBufferLength)
+  if (_u8ResponseBufferIndex < u8ResponseBufferLength)
   {
     return _u16ResponseBuffer[_u8ResponseBufferIndex++];
   }
@@ -406,7 +406,15 @@ uint8_t ModbusMaster::readInputRegisters(uint16_t u16ReadAddress,
   _u16ReadQty = u16ReadQty;
   return ModbusMasterTransaction(ku8MBReadInputRegisters);
 }
-
+/**
+Modbus function 0x43 readDeviceIdentification.
+**/
+uint8_t ModbusMaster::readDeviceIdentification(uint8_t u8ReadObjectId,uint8_t u8DeviceIdCode)
+{
+	_u8ReadDeviceIdObjectCode = u8ReadObjectId;
+	_u8ReadDeviceIdCode = u8DeviceIdCode;
+	return ModbusMasterTransaction(ku8MBReadDeviceIdentification);
+}
 
 /**
 Modbus function 0x05 Write Single Coil.
@@ -606,11 +614,20 @@ uint8_t ModbusMaster::ModbusMasterTransaction(uint8_t u8MBFunction)
   uint32_t u32StartTime;
   uint8_t u8BytesLeft = 8;
   uint8_t u8MBStatus = ku8MBSuccess;
+  uint8_t u8function;
   
   // assemble Modbus Request Application Data Unit
-  u8ModbusADU[u8ModbusADUSize++] = _u8MBSlave;
+  u8ModbusADU[u8ModbusADUSize++] = u8MBSlave;
   u8ModbusADU[u8ModbusADUSize++] = u8MBFunction;
-  
+  switch (u8MBFunction)
+  {
+	case ku8MBReadDeviceIdentification:
+		u8ModbusADU[u8ModbusADUSize++] = 0x0E; // MEI Type
+		u8ModbusADU[u8ModbusADUSize++] = _u8ReadDeviceIdCode;
+		u8ModbusADU[u8ModbusADUSize++] = _u8ReadDeviceIdObjectCode;
+
+		break;
+  }
   switch(u8MBFunction)
   {
     case ku8MBReadCoils:
@@ -723,6 +740,8 @@ uint8_t ModbusMaster::ModbusMasterTransaction(uint8_t u8MBFunction)
   
   // loop until we run out of time or bytes, or an error occurs
   u32StartTime = millis();
+  bool firstbyte = true;
+  byte temp = 0x00;
   while (u8BytesLeft && !u8MBStatus)
   {
     if (_serial->available())
@@ -730,8 +749,14 @@ uint8_t ModbusMaster::ModbusMasterTransaction(uint8_t u8MBFunction)
 #if __MODBUSMASTER_DEBUG__
       digitalWrite(__MODBUSMASTER_DEBUG_PIN_A__, true);
 #endif
-      u8ModbusADU[u8ModbusADUSize++] = _serial->read();
-      u8BytesLeft--;
+      
+	  temp = _serial->read();
+
+	  if (temp != 0x00 || firstbyte == false) {
+		  u8ModbusADU[u8ModbusADUSize++] = temp;
+		  firstbyte = false;
+		  u8BytesLeft--;
+	  }
 #if __MODBUSMASTER_DEBUG__
       digitalWrite(__MODBUSMASTER_DEBUG_PIN_A__, false);
 #endif
@@ -750,11 +775,16 @@ uint8_t ModbusMaster::ModbusMasterTransaction(uint8_t u8MBFunction)
 #endif
     }
     
-    // evaluate slave ID, function code once enough bytes have been read
-    if (u8ModbusADUSize == 5)
+    
+	if (u8ModbusADUSize == 2 && ku8MBReadDeviceIdentification == u8MBFunction) {
+		if (u8ModbusADU[1]== ku8MBReadDeviceIdentification)
+			u8BytesLeft = u8BytesLeft + 2;
+	}
+	// evaluate slave ID, function code once enough bytes have been read
+    if ((u8ModbusADUSize == 5 && ku8MBReadDeviceIdentification!= u8MBFunction) || (u8ModbusADUSize == 10 && ku8MBReadDeviceIdentification == u8MBFunction))
     {
       // verify response is for correct Modbus slave
-      if (u8ModbusADU[0] != _u8MBSlave)
+      if (u8ModbusADU[0] != u8MBSlave)
       {
         u8MBStatus = ku8MBInvalidSlaveID;
         break;
@@ -764,6 +794,7 @@ uint8_t ModbusMaster::ModbusMasterTransaction(uint8_t u8MBFunction)
       if ((u8ModbusADU[1] & 0x7F) != u8MBFunction)
       {
         u8MBStatus = ku8MBInvalidFunction;
+		u8function = u8MBFunction;
         break;
       }
       
@@ -784,7 +815,9 @@ uint8_t ModbusMaster::ModbusMasterTransaction(uint8_t u8MBFunction)
         case ku8MBReadWriteMultipleRegisters:
           u8BytesLeft = u8ModbusADU[2];
           break;
-          
+		case ku8MBReadDeviceIdentification:
+			u8BytesLeft = u8ModbusADU[9]+2;
+			break;
         case ku8MBWriteSingleCoil:
         case ku8MBWriteMultipleCoils:
         case ku8MBWriteSingleRegister:
@@ -820,7 +853,6 @@ uint8_t ModbusMaster::ModbusMasterTransaction(uint8_t u8MBFunction)
       u8MBStatus = ku8MBInvalidCRC;
     }
   }
-
   // disassemble ADU into words
   if (!u8MBStatus)
   {
@@ -837,7 +869,7 @@ uint8_t ModbusMaster::ModbusMasterTransaction(uint8_t u8MBFunction)
             _u16ResponseBuffer[i] = word(u8ModbusADU[2 * i + 4], u8ModbusADU[2 * i + 3]);
           }
           
-          _u8ResponseBufferLength = i;
+          u8ResponseBufferLength = i;
         }
         
         // in the event of an odd number of bytes, load last byte into zero-padded word
@@ -848,7 +880,7 @@ uint8_t ModbusMaster::ModbusMasterTransaction(uint8_t u8MBFunction)
             _u16ResponseBuffer[i] = word(0, u8ModbusADU[2 * i + 3]);
           }
           
-          _u8ResponseBufferLength = i + 1;
+          u8ResponseBufferLength = i + 1;
         }
         break;
         
@@ -863,9 +895,33 @@ uint8_t ModbusMaster::ModbusMasterTransaction(uint8_t u8MBFunction)
             _u16ResponseBuffer[i] = word(u8ModbusADU[2 * i + 3], u8ModbusADU[2 * i + 4]);
           }
           
-          _u8ResponseBufferLength = i;
+          u8ResponseBufferLength = i+1;
         }
         break;
+	  case ku8MBReadDeviceIdentification:
+		  // load bytes into word; response bytes are ordered L, H, L, H, ...
+		  for (i = 0; i < (u8ModbusADU[9] >> 1); i++)
+		  {
+			  if (i < ku8MaxBufferSize)
+			  {
+				  _u16ResponseBuffer[i] = word(u8ModbusADU[2 * i + 10], u8ModbusADU[2 * i + 11]);
+			  }
+
+			  u8ResponseBufferLength = i;
+		  }
+
+		  // in the event of an odd number of bytes, load last byte into zero-padded word
+		  if (u8ModbusADU[9] % 2)
+		  {
+			  if (i < ku8MaxBufferSize)
+			  {
+				  _u16ResponseBuffer[i+1] = word( u8ModbusADU[2 * i + 12],0);
+			  }
+
+			  //u8ResponseBufferLength = i + 1;
+		  }
+		  u8ResponseBufferLength = i + 1;
+		  break;
     }
   }
   

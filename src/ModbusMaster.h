@@ -207,6 +207,7 @@ class ModbusMaster
     uint8_t  readDiscreteInputs(uint16_t, uint16_t);
     uint8_t  readHoldingRegisters(uint16_t, uint16_t);
     uint8_t  readInputRegisters(uint16_t, uint8_t);
+	uint8_t  readDeviceIdentification(uint8_t, uint8_t);
     uint8_t  writeSingleCoil(uint16_t, uint8_t);
     uint8_t  writeSingleRegister(uint16_t, uint16_t);
     uint8_t  writeMultipleCoils(uint16_t, uint16_t);
@@ -216,11 +217,15 @@ class ModbusMaster
     uint8_t  maskWriteRegister(uint16_t, uint16_t, uint16_t);
     uint8_t  readWriteMultipleRegisters(uint16_t, uint16_t, uint16_t, uint16_t);
     uint8_t  readWriteMultipleRegisters(uint16_t, uint16_t);
+
+	uint8_t u8MBSlave;                                         ///< Modbus slave (1..255) initialized in begin()
+	uint8_t u8ResponseBufferLength;
+	uint8_t u8function;
     
   private:
     Stream* _serial;                                             ///< reference to serial port object
-    uint8_t  _u8MBSlave;                                         ///< Modbus slave (1..255) initialized in begin()
-    static const uint8_t ku8MaxBufferSize                = 64;   ///< size of response/transmit buffers    
+    
+    static const uint8_t ku8MaxBufferSize                = 150;   ///< size of response/transmit buffers    
     uint16_t _u16ReadAddress;                                    ///< slave register from which to read
     uint16_t _u16ReadQty;                                        ///< quantity of words to read
     uint16_t _u16ResponseBuffer[ku8MaxBufferSize];               ///< buffer to store Modbus slave response; read via GetResponseBuffer()
@@ -232,7 +237,9 @@ class ModbusMaster
     uint16_t u16TransmitBufferLength;
     uint16_t* rxBuffer; // from Wire.h -- need to clean this up Rx
     uint8_t _u8ResponseBufferIndex;
-    uint8_t _u8ResponseBufferLength;
+    
+	uint8_t _u8ReadDeviceIdCode;
+	uint8_t _u8ReadDeviceIdObjectCode;
     
     // Modbus function codes for bit access
     static const uint8_t ku8MBReadCoils                  = 0x01; ///< Modbus function 0x01 Read Coils
@@ -248,6 +255,9 @@ class ModbusMaster
     static const uint8_t ku8MBMaskWriteRegister          = 0x16; ///< Modbus function 0x16 Mask Write Register
     static const uint8_t ku8MBReadWriteMultipleRegisters = 0x17; ///< Modbus function 0x17 Read Write Multiple Registers
     
+	// Modbus function codes for ascii Device info
+	static const uint8_t ku8MBReadDeviceIdentification	 = 0x2B; ///< Modbus function 0x2B Read Device Info
+
     // Modbus timeout [milliseconds]
     static const uint16_t ku16MBResponseTimeout          = 2000; ///< Modbus timeout [milliseconds]
     
